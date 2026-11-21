@@ -1,0 +1,591 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#F7F6F2">
+<title>Kanji Scroll</title>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #F7F6F2;
+  color: #252522;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* Main feed */
+
+#feed {
+  height: 100dvh;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+}
+
+#feed::-webkit-scrollbar {
+  display: none;
+}
+
+.kanji-card {
+  position: relative;
+  height: 100dvh;
+  min-height: 500px;
+
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  padding: 70px 25px 45px;
+}
+
+/* Top-right icons */
+
+.top-actions {
+  position: absolute;
+  top: 25px;
+  right: 25px;
+  display: flex;
+  gap: 12px;
+}
+
+.reference-button {
+  background: transparent;
+  border: none;
+  color: #99958D;
+  cursor: pointer;
+  padding: 8px;
+  transition: color 0.2s;
+}
+
+.reference-button:hover {
+  color: #252522;
+}
+
+.reference-button svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Kanji */
+
+.kanji {
+  font-family:
+    "Noto Serif JP",
+    "Yu Mincho",
+    "Hiragino Mincho ProN",
+    serif;
+
+  font-size: clamp(120px, 28vw, 190px);
+  font-weight: 400;
+  line-height: 1.2;
+  text-align: center;
+  color: #252522;
+}
+
+/* Keyword */
+
+.keyword {
+  color: #252522;
+  font-size: clamp(25px, 6vw, 38px);
+  font-weight: 600;
+  margin-top: 5px;
+  text-align: center;
+}
+
+/* Components */
+
+.components {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+
+  max-width: 450px;
+  margin-top: 42px;
+}
+
+.component {
+  font-size: 12px;
+  color: #77746F;
+  background: #ECEAE4;
+  padding: 7px 10px;
+  border-radius: 6px;
+}
+
+/* Pronunciations */
+
+.readings {
+  display: flex;
+  gap: 25px;
+  justify-content: center;
+  margin-top: 30px;
+
+  color: #77746F;
+  font-size: 14px;
+  text-align: center;
+}
+
+/* Frame number */
+
+.frame {
+  position: absolute;
+  bottom: 30px;
+  color: #99958D;
+  font-size: 12px;
+  letter-spacing: 2px;
+}
+
+/* Loading */
+
+#loading {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: #F7F6F2;
+  color: #88847D;
+  font-size: 14px;
+}
+
+#loading.error {
+  padding: 30px;
+  text-align: center;
+  line-height: 1.7;
+}
+
+/* Reference overlay */
+
+.reference-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+
+  background: #F7F6F2;
+
+  display: flex;
+  flex-direction: column;
+  padding: 15px;
+}
+
+.reference-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+}
+
+.reference-toolbar button {
+  background: transparent;
+  color: #77746F;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+  padding: 8px;
+}
+
+.reference-toolbar a {
+  color: #77746F;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.reference-overlay iframe {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: none;
+  border-radius: 10px;
+  background: white;
+}
+
+/* Smaller screens */
+
+@media (max-height: 650px) {
+  .kanji {
+    font-size: 105px;
+  }
+
+  .components {
+    margin-top: 20px;
+  }
+
+  .readings {
+    margin-top: 18px;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<div id="loading">
+  Loading kanji...
+</div>
+
+<main id="feed"></main>
+
+<script>
+
+// =====================================
+// GOOGLE SHEETS CONFIGURATION
+// =====================================
+
+const SHEET_ID =
+  "1o5m0noApcwNMr-g3hEhneyJvWbDUVldJnPOYBznct58";
+
+const SHEET_GID = "0";
+
+const SHEET_URL =
+  `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${SHEET_GID}&headers=0`;
+
+// Column positions (zero-based)
+
+const COL = {
+  kanji: 0,       // A
+  frame: 1,       // B
+  keyword: 2,     // C
+  components: 3,  // D
+  onyomi: 6,      // G
+  kunyomi: 7      // H
+};
+
+
+// =====================================
+// HELPERS
+// =====================================
+
+function getCell(row, index) {
+  return row.c?.[index]?.v ?? "";
+}
+
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[char]);
+}
+
+function splitReadings(value) {
+  return String(value)
+    .split(";")
+    .map(value => value.trim())
+    .filter(Boolean);
+}
+
+
+// =====================================
+// LOAD GOOGLE SHEET
+// =====================================
+
+async function loadSheet() {
+
+  try {
+
+    const response = await fetch(SHEET_URL);
+
+    if (!response.ok) {
+      throw new Error("Google Sheets request failed.");
+    }
+
+    const text = await response.text();
+
+    // Extract JSON from Google Visualization response
+
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+
+    if (start === -1 || end === -1) {
+      throw new Error("Could not parse Google Sheets response.");
+    }
+
+    const json = JSON.parse(
+      text.substring(start, end + 1)
+    );
+
+    const kanjiData = json.table.rows
+      .map(row => ({
+
+        kanji: getCell(row, COL.kanji),
+
+        frame: getCell(row, COL.frame),
+
+        keyword: getCell(row, COL.keyword),
+
+        components: splitReadings(
+          getCell(row, COL.components)
+        ),
+
+        onyomi: splitReadings(
+          getCell(row, COL.onyomi)
+        ),
+
+        kunyomi: splitReadings(
+          getCell(row, COL.kunyomi)
+        )
+
+      }))
+      .filter(item => item.kanji && item.keyword);
+
+    if (!kanjiData.length) {
+      throw new Error("No kanji found in spreadsheet.");
+    }
+
+    shuffle(kanjiData);
+
+    document.getElementById("loading").remove();
+
+  } catch (error) {
+
+    console.error(error);
+
+    const loading = document.getElementById("loading");
+
+    loading.classList.add("error");
+
+    loading.innerHTML = `
+      Could not load kanji.
+
+      <br><br>
+
+      Make sure your Google Sheet is shared as
+      <strong>Anyone with the link can view</strong>.
+
+      <br><br>
+
+      ${escapeHTML(error.message)}
+    `;
+  }
+}
+
+
+// =====================================
+// SHUFFLE
+// =====================================
+
+function shuffle(array) {
+
+  const randomized = [...array];
+
+  // Fisher-Yates shuffle
+
+  for (let i = randomized.length - 1; i > 0; i--) {
+
+    const j = Math.floor(Math.random() * (i + 1));
+
+    [randomized[i], randomized[j]] =
+      [randomized[j], randomized[i]];
+  }
+
+  renderFeed(randomized);
+}
+
+
+// =====================================
+// RENDER FEED
+// =====================================
+
+function renderFeed(data) {
+
+  const feed = document.getElementById("feed");
+
+  feed.innerHTML = data.map((item, index) => `
+
+    <article class="kanji-card">
+
+      <div class="top-actions">
+
+        <!-- RTK -->
+
+        <button
+          class="reference-button"
+          data-kanji="${escapeHTML(item.kanji)}"
+          data-type="rtk"
+          aria-label="RTK Reference"
+          title="RTK Reference"
+        >
+          <svg viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="7"/>
+            <path d="m20 20-4-4"/>
+          </svg>
+        </button>
+
+        <!-- Jisho -->
+
+        <button
+          class="reference-button"
+          data-kanji="${escapeHTML(item.kanji)}"
+          data-type="jisho"
+          aria-label="Jisho Dictionary"
+          title="Jisho Dictionary"
+        >
+          <svg viewBox="0 0 24 24">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+          </svg>
+        </button>
+
+      </div>
+
+      <div class="kanji">
+        ${escapeHTML(item.kanji)}
+      </div>
+
+      <div class="keyword">
+        ${escapeHTML(item.keyword)}
+      </div>
+
+      <div class="components">
+
+        ${item.components.map(component => `
+          <span class="component">
+            ${escapeHTML(component)}
+          </span>
+        `).join("")}
+
+      </div>
+
+      <div class="readings">
+
+        ${item.onyomi.length ? `
+          <span>
+            ${item.onyomi.map(escapeHTML).join(" · ")}
+          </span>
+        ` : ""}
+
+        ${item.kunyomi.length ? `
+          <span>
+            ${item.kunyomi.map(escapeHTML).join(" · ")}
+          </span>
+        ` : ""}
+
+      </div>
+
+      <div class="frame">
+        ${escapeHTML(item.frame)}
+      </div>
+
+    </article>
+
+  `).join("");
+}
+
+
+// =====================================
+// RTK / JISHO REFERENCES
+// =====================================
+
+function openReference(kanji, type) {
+
+  const urls = {
+
+    rtk:
+      `https://hochanh.github.io/rtk/${encodeURIComponent(kanji)}/index.html`,
+
+    jisho:
+      `https://jisho.org/search/${encodeURIComponent(kanji + " #kanji")}`
+
+  };
+
+  const url = urls[type];
+
+  if (!url) return;
+
+  const overlay = document.createElement("div");
+
+  overlay.className = "reference-overlay";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "reference-toolbar";
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "close-reference";
+  closeButton.textContent = "✕";
+  closeButton.setAttribute("aria-label", "Close reference");
+
+  const externalLink = document.createElement("a");
+  externalLink.href = url;
+  externalLink.target = "_blank";
+  externalLink.rel = "noopener noreferrer";
+  externalLink.textContent = "Open in new tab ↗";
+
+  const iframe = document.createElement("iframe");
+  iframe.src = url;
+  iframe.title = `${type} reference for ${kanji}`;
+
+  toolbar.append(closeButton, externalLink);
+  overlay.append(toolbar, iframe);
+
+  document.body.appendChild(overlay);
+
+  // Close overlay
+
+  function close() {
+    overlay.remove();
+    document.removeEventListener("keydown", handleEscape);
+  }
+
+  closeButton.addEventListener("click", close);
+
+  // Escape key
+
+  function handleEscape(event) {
+    if (event.key === "Escape") {
+      close();
+    }
+  }
+
+  document.addEventListener("keydown", handleEscape);
+}
+
+
+// =====================================
+// REFERENCE BUTTON EVENT
+// =====================================
+
+document.getElementById("feed")
+  .addEventListener("click", event => {
+
+    const button = event.target.closest(".reference-button");
+
+    if (!button) return;
+
+    openReference(
+      button.dataset.kanji,
+      button.dataset.type
+    );
+
+  });
+
+
+// =====================================
+// START
+// =====================================
+
+loadSheet();
+
+</script>
+
+</body>
+</html>
